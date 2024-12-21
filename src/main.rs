@@ -2,6 +2,7 @@ use std::env;
 use std::io;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use tokio::sync::{mpsc, Mutex, Semaphore};
 use tokio::time::Instant;
@@ -13,9 +14,43 @@ use indicatif::{ProgressBar, ProgressStyle};
 use walkdir::WalkDir;
 
 #[derive(Debug)]
+struct MatchContext {
+    text: String,
+    start: usize,
+    end: usize,
+}
+
+#[derive(Debug)]
 struct FileMatch {
     path: String,
-    matches: Vec<String>,
+    match_count: usize,
+    matches: Vec<MatchContext>,
+}
+
+fn get_context(line: &str, match_start: usize, match_end: usize, context_size: usize) -> MatchContext {
+    let start = if match_start > context_size {
+        match_start - context_size
+    } else {
+        0
+    };
+    let end = std::cmp::min(match_end + context_size, line.len());
+    
+    // Find word boundaries or use exact positions
+    let context_start = line[start..match_start]
+        .rfind(char::is_whitespace)
+        .map(|i| start + i + 1)
+        .unwrap_or(start);
+        
+    let context_end = line[match_end..end]
+        .find(char::is_whitespace)
+        .map(|i| match_end + i)
+        .unwrap_or(end);
+
+    MatchContext {
+        text: line[context_start..context_end].to_string(),
+        start: match_start - context_start,
+        end: match_end - context_start,
+    }
 }
 
 fn print_usage() {
@@ -33,7 +68,7 @@ fn blocking_enumerate_dirs(
     size_limit_bytes: u64,
 ) -> io::Result<()> {
     for entry_res in WalkDir::new(&start_dir)
-        .follow_links(false) // optionally skip symlinks
+        .follow_links(false)
         .into_iter()
     {
         let entry = match entry_res {
@@ -44,13 +79,10 @@ fn blocking_enumerate_dirs(
             }
         };
 
-        // If it's not a file, skip it
         if !entry.file_type().is_file() {
             continue;
         }
 
-        // Check file size
-        // (metadata() is synchronous, but it's usually fine in a blocking enumerator)
         let md = match entry.metadata() {
             Ok(m) => m,
             Err(e) => {
@@ -63,13 +95,10 @@ fn blocking_enumerate_dirs(
             continue;
         }
 
-        // We discovered one more valid file
         progress_bar.inc_length(1);
 
-        // Send the path to the async worker channel
         let path = entry.into_path();
         if let Err(_send_err) = file_tx.blocking_send(path) {
-            // The receiver was closed, so no reason to keep enumerating
             break;
         }
     }
@@ -79,7 +108,6 @@ fn blocking_enumerate_dirs(
 
 #[tokio::main(flavor = "multi_thread", worker_threads = 32)]
 async fn main() -> io::Result<()> {
-    // Parse args
     let args: Vec<String> = env::args().collect();
     let (pattern, start_path, size_limit_mb) = if cfg!(debug_assertions) {
         (
@@ -115,16 +143,12 @@ async fn main() -> io::Result<()> {
     };
 
     let start_time = Instant::now();
+    let total_matches = Arc::new(AtomicUsize::new(0));
 
-    // We'll have an mpsc::channel for file paths
     let (file_tx, file_rx) = mpsc::channel::<PathBuf>(10_000);
-    // We wrap the receiver in a Mutex/Arc so multiple workers can share it
     let file_rx = Arc::new(Mutex::new(file_rx));
-
-    // We'll have another channel for results
     let (result_tx, mut result_rx) = mpsc::channel::<FileMatch>(10_000);
 
-    // Setup progress bar
     let progress_bar = Arc::new(ProgressBar::new(0));
     progress_bar.set_style(
         ProgressStyle::with_template("{bar:40.cyan/blue} {pos}/{len} files processed  {msg}")
@@ -132,17 +156,12 @@ async fn main() -> io::Result<()> {
             .progress_chars("##-"),
     );
 
-    // We do a "blocking" enumeration in a separate thread
     let pb_for_enum = Arc::clone(&progress_bar);
     let enum_handle = tokio::task::spawn_blocking(move || {
         let _ = blocking_enumerate_dirs(start_path, file_tx, &pb_for_enum, size_limit_bytes);
     });
 
-    // We'll spawn multiple async workers that just read files from file_rx
     let num_workers = num_cpus::get();
-    println!("Using {num_workers} file-reading workers...");
-
-    // A semaphore to limit concurrency for reading big files
     let semaphore = Arc::new(Semaphore::new(num_workers * 2));
 
     let mut worker_handles = Vec::new();
@@ -152,104 +171,75 @@ async fn main() -> io::Result<()> {
         let sem = Arc::clone(&semaphore);
         let file_rx = Arc::clone(&file_rx);
         let pb_for_worker = Arc::clone(&progress_bar);
+        let total_matches = Arc::clone(&total_matches);
 
-        // Each worker will keep reading from `file_rx` until it sees None
         let handle = tokio::spawn(async move {
             while let Some(file_path) = {
                 let mut rx = file_rx.lock().await;
                 rx.recv().await
             } {
-                // Acquire semaphore
                 let _permit = sem.acquire().await.unwrap();
-
-                // "Complete" 1 file in the progress bar
                 pb_for_worker.inc(1);
 
-                // Attempt to read
                 match tokio::fs::read_to_string(&file_path).await {
                     Ok(contents) => {
+                        let mut match_count = 0;
                         let mut matches = Vec::new();
+
                         for line in contents.lines() {
-                            if regex.is_match(line) {
-                                matches.push(line.to_string());
+                            if let Some(m) = regex.find(line) {
+                                match_count += 1;
+                                matches.push(get_context(line, m.start(), m.end(), 64));
                             }
                         }
-                        if !matches.is_empty() {
+
+                        if match_count > 0 {
+                            total_matches.fetch_add(match_count, Ordering::Relaxed);
                             let _ = result_tx.send(FileMatch {
                                 path: file_path.to_string_lossy().to_string(),
+                                match_count,
                                 matches,
                             }).await;
                         }
                     }
-                    Err(_e) => {
-                        // Not a UTF-8 file or locked file, etc. We ignore or log
-                    }
+                    Err(_) => {}
                 }
             }
         });
         worker_handles.push(handle);
     }
 
-    // Drop our copy of result_tx so only workers hold it
     drop(result_tx);
 
-    // Meanwhile, in main, we read from result_rx
     let result_reader = tokio::spawn(async move {
-        let mut total_matches = 0;
         let mut detected_files = Vec::new();
         while let Some(file_match) = result_rx.recv().await {
-            println!("\nFound matches in file: {}", file_match.path);
-            detected_files.push(file_match.path.clone());
-            for line in file_match.matches {
-                // Determine the maximum between the matched substring length and 128
-                let max_length = std::cmp::max(
-                    regex.find(&line).map_or(0, |m| m.end() - m.start()),
-                    128
-                );
-
-                // Truncate the line if it's longer than max_length
-                let truncated_line = if line.len() > max_length {
-                    // Ensure we don't break in the middle of a multi-byte character
-                    line.char_indices()
-                        .nth(max_length)
-                        .map(|(idx, _)| &line[..idx])
-                        .unwrap_or(line.as_str())
-                } else {
-                    line.as_str()
-                };
-
-                println!("  {truncated_line}");
-                total_matches += 1;
+            println!("Found {} matches in file: {}", file_match.match_count, file_match.path);
+            for context in file_match.matches {
+                println!("  Context: {}", context.text);
+                println!("  Match position: {}..{}", context.start, context.end);
             }
+            detected_files.push(file_match.path.clone());
         }
-        (total_matches, detected_files)
+        detected_files
     });
 
-    // Wait for the enumerator to finish
     if let Err(e) = enum_handle.await {
         eprintln!("Enumerator task error: {e}");
     }
 
-    // After enumerator finishes, the file_tx is closed, so eventually all workers see `None` from file_rx
-    // Wait for all workers
     if let Err(e) = join_all(worker_handles).await.into_iter().collect::<Result<Vec<_>, _>>() {
         eprintln!("Error joining worker: {e}");
     }
 
-    // Now workers are done => results stop eventually
-    let (total_matches, detected_files) = result_reader.await.unwrap_or((0, vec![]));
+    let detected_files = result_reader.await.unwrap_or_default();
 
-    // Finish the progress bar
     progress_bar.finish_with_message("All files processed!");
 
     let elapsed = start_time.elapsed();
-    println!("\nEnumeration + search completed in {elapsed:.2?}");
-    println!("Total matches found: {}", total_matches);
-
-    println!("\nDetected files:");
-    for file in detected_files {
-        println!("{}", file);
-    }
+    println!("\nSearch completed in {elapsed:.2?}");
+    println!("Total matches found: {}", total_matches.load(Ordering::Relaxed));
+    println!("Files with matches: {}", detected_files.len());
 
     Ok(())
 }

@@ -3,44 +3,40 @@
 <head>
     <title>Filesystem Searcher</title>
     <style>
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
-            margin: 0;
-            padding: 16px;
-            background-color: #f5f5f5;
-            height: 100vh;
-            box-sizing: border-box;
-            overflow: hidden;
-        }
+        /* Global resets and base styles */
         * {
             box-sizing: border-box;
-        }
-        .container {
-            max-width: none;
             margin: 0;
-            background-color: white;
-            padding: 20px;
-            border-radius: 8px;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-            height: calc(100vh - 32px);
+            padding: 0;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell, "Open Sans", "Helvetica Neue", sans-serif;
+            background-color: #f5f5f5;
+            height: 100vh;
+            overflow: hidden;
+        }
+        /* Main container */
+        .container {
             display: flex;
             flex-direction: column;
+            height: 100%;
+            padding: 16px;
         }
         h1 {
-            margin-top: 0;
-            margin-bottom: 16px;
+            margin-bottom: 12px;
+            font-size: 20px;
         }
+        /* Search form */
         .search-form {
             display: grid;
             grid-template-columns: 1fr auto;
             gap: 10px;
-            margin-bottom: 12px;
+            margin-bottom: 8px;
         }
         .input-group {
             display: grid;
             grid-template-columns: 1fr 1fr 150px;
             gap: 10px;
-            align-items: start;
         }
         .input-field {
             display: flex;
@@ -52,91 +48,52 @@
             font-weight: 500;
             color: #666;
         }
-        .input-field .input-row {
+        .input-row {
             display: flex;
-            gap: 10px;
+            gap: 6px;
             align-items: center;
         }
-        input[type="text"], input[type="number"] {
-            padding: 8px 12px;
+        input[type="text"],
+        input[type="number"] {
+            padding: 6px 8px;
             border: 1px solid #ddd;
             border-radius: 4px;
             font-size: 14px;
             width: 100%;
         }
-        input[type="text"]:focus, input[type="number"]:focus {
+        input[type="text"]:focus,
+        input[type="number"]:focus {
             outline: none;
-            border-color: #0066cc;
-            box-shadow: 0 0 0 2px rgba(0,102,204,0.1);
+            border-color: #007bff;
+            box-shadow: 0 0 0 2px rgba(0,123,255,0.1);
         }
         .tooltip {
-            font-size: 12px;
+            font-size: 11px;
             color: #666;
-            margin-top: 2px;
             font-style: italic;
         }
         button {
-            padding: 8px 16px;
-            background-color: #0066cc;
+            padding: 6px 12px;
+            background-color: #007bff;
             color: white;
             border: none;
             border-radius: 4px;
-            cursor: pointer;
             font-size: 14px;
+            cursor: pointer;
             transition: background-color 0.2s;
-            white-space: nowrap;
         }
         button:hover {
-            background-color: #0052a3;
+            background-color: #0069d9;
         }
         button:disabled {
             background-color: #cccccc;
             cursor: not-allowed;
         }
-        .results-container {
-            display: grid;
-            grid-template-columns: 1fr 300px;
-            gap: 20px;
-            flex-grow: 1;
-            min-height: 0;
-        }
-        #results {
-            white-space: pre-wrap;
-            font-family: monospace;
-            background-color: #f8f9fa;
-            padding: 15px;
-            border-radius: 4px;
-            overflow-y: auto;
-            font-size: 13px;
-            line-height: 1.4;
-        }
-        .file-list {
-            background-color: #f8f9fa;
-            padding: 12px;
-            border-radius: 4px;
-            overflow-y: auto;
-        }
-        .file-item {
-            padding: 8px;
-            border-bottom: 1px solid #ddd;
-            cursor: pointer;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-        }
-        .file-item:hover {
-            background-color: #e9ecef;
-        }
-        .file-item:last-child {
-            border-bottom: none;
-        }
-        .file-icon {
-            color: #0066cc;
-            font-size: 16px;
-        }
+        /* Stats & progress */
         .progress {
-            margin: 8px 0;
             display: none;
+            margin: 6px 0;
+            font-size: 14px;
             color: #666;
         }
         .progress.active {
@@ -145,13 +102,137 @@
         .stats {
             color: #666;
             font-size: 14px;
-            margin: 8px 0;
+            margin: 6px 0;
+        }
+        /* Layout for results area */
+        .results-container {
+            display: grid;
+            grid-template-columns: 1fr 280px;
+            gap: 16px;
+            flex: 1;
+            min-height: 0;
+        }
+        /* Matches/results panel */
+        #results {
+            background-color: #fff;
+            border: 1px solid #eee;
+            border-radius: 4px;
+            padding: 12px;
+            font-family: monospace;
+            font-size: 13px;
+            line-height: 1.2;
+            overflow-y: auto;
+        }
+        .match-entry {
+            margin: 0 0 12px 0;
+            background: #ffffff;
+            border-radius: 6px;
+            border: 1px solid #e0e0e0;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+            transition: all 0.2s ease;
+        }
+        .match-entry:hover {
+            box-shadow: 0 2px 6px rgba(0,0,0,0.1);
+            border-color: #d0d0d0;
+        }
+        .match-file-header {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            background-color: #f8f9fa;
+            padding: 8px 12px;
+            font-size: 13px;
+            font-weight: 500;
+            color: #444;
+            border-bottom: 1px solid #eee;
+            border-radius: 6px 6px 0 0;
+        }
+        .match-file {
+            color: #0366d6;
+            cursor: pointer;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            max-width: 300px;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        }
+        .match-file:hover {
+            color: #0076ff;
+            text-decoration: underline;
+        }
+        .match-count-badge {
+            background-color: #0366d6;
+            color: #fff;
+            padding: 2px 8px;
+            border-radius: 12px;
+            font-size: 11px;
+            font-weight: 600;
+            letter-spacing: 0.3px;
+        }
+        .match-contexts {
+            padding: 6px 0;
+            background: #ffffff;
+            border-radius: 0 0 6px 6px;
+        }
+        .match-context {
+            font-family: "SF Mono", Consolas, "Liberation Mono", Menlo, Courier, monospace;
+            font-size: 12px;
+            line-height: 1.4;
+            padding: 4px 12px;
+            color: #24292e;
+            border-left: 3px solid transparent;
+            transition: background-color 0.15s ease;
+        }
+        .match-context:hover {
+            background-color: #f6f8fa;
+            border-left-color: #0366d6;
+        }
+        .match-highlight {
+            background-color: #fff3b8;
+            color: #24292e;
+            padding: 1px 2px;
+            border-radius: 2px;
+            font-weight: 500;
+            box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+        }
+        /* File list panel */
+        .file-list {
+            background-color: #f8f9fa;
+            padding: 8px;
+            border-radius: 4px;
+            border: 1px solid #eee;
+            overflow-y: auto;
+            position: relative;
+        }
+        .file-item {
+            position: absolute;
+            left: 8px;
+            right: 8px;
+            padding: 8px;
+            border-bottom: 1px solid #ddd;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            background-color: #f8f9fa;
+            height: 36px;
+        }
+        .file-item:hover {
+            background-color: #e9ecef;
+        }
+        .file-item:last-child {
+            border-bottom: none;
+        }
+        .file-icon {
+            color: #007bff;
+            font-size: 16px;
         }
     </style>
 </head>
 <body>
     <div class="container">
         <h1>Filesystem Searcher</h1>
+        <!-- SEARCH FORM -->
         <div class="search-form">
             <div class="input-group">
                 <div class="input-field">
@@ -175,22 +256,27 @@
             </div>
             <button id="search">Search</button>
         </div>
+
+        <!-- PROGRESS & STATS -->
         <div class="progress">
             <p>Searching files...</p>
         </div>
         <div class="stats">
             <span id="matchCount">0</span> matches in <span id="fileCount">0</span> files
         </div>
+
+        <!-- RESULTS -->
         <div class="results-container">
             <div id="results"></div>
             <div class="file-list" id="fileList"></div>
         </div>
     </div>
 
+    <!-- SCRIPTS -->
     <script>
         const { ipcRenderer } = require('electron');
         const path = require('path');
-        
+
         const patternInput = document.getElementById('pattern');
         const directoryInput = document.getElementById('directory');
         const sizeLimitInput = document.getElementById('sizeLimit');
@@ -205,18 +291,162 @@
         let detectedFiles = new Set();
         let matchCount = 0;
 
-        browseButton.addEventListener('click', async () => {
-            const directory = await ipcRenderer.invoke('select-directory');
-            if (directory) {
-                directoryInput.value = directory;
-            }
-        });
+        // (Optional) helper to remove extra blank lines/spaces from match context
+        function sanitizeContextText(text) {
+            return text
+                .replace(/\n\s*\n/g, '\n')  // collapse consecutive blank lines
+                .replace(/[ \t]+/g, ' ')    // collapse repeated spaces/tabs
+                .trim();
+        }
 
+        function processSearchOutput(text) {
+            const lines = text.split('\n');
+            let currentMatch = null;
+            let currentMatches = [];
+
+            for (let i = 0; i < lines.length; i++) {
+                const line = lines[i].trim();
+                if (!line) continue;
+
+                const matchCountRegex = /Found (\d+) matches? in file: (.*)/;
+                const match = line.match(matchCountRegex);
+
+                if (match) {
+                    // If we were collecting matches for a previous file, flush them
+                    if (currentMatch && currentMatches.length) {
+                        appendMatchGroup(currentMatch, currentMatches);
+                        currentMatches = [];
+                    }
+                    const [_, count, filePath] = match;
+                    currentMatch = { filePath, count: parseInt(count, 10) };
+                    matchCount += currentMatch.count;
+                    detectedFiles.add(filePath);
+                } else if (line.startsWith('Context: ') && currentMatch) {
+                    currentMatch.currentContext = sanitizeContextText(line.substring(9));
+                } else if (line.startsWith('Match position: ') && currentMatch && currentMatch.currentContext) {
+                    const positions = line.match(/\d+/g);
+                    if (positions && positions.length >= 2) {
+                        const [start, end] = positions.map(Number);
+                        currentMatches.push({
+                            context: currentMatch.currentContext,
+                            start,
+                            end
+                        });
+                    }
+                }
+            }
+
+            if (currentMatch && currentMatches.length) {
+                appendMatchGroup(currentMatch, currentMatches);
+            }
+
+            matchCountSpan.textContent = matchCount;
+            fileCountSpan.textContent = detectedFiles.size;
+            updateFileList();
+        }
+
+        function appendMatchGroup(matchInfo, matches) {
+            const div = document.createElement('div');
+            div.className = 'match-entry';
+
+            const headerHtml = `
+                <div class="match-file-header">
+                    <span class="match-file" title="${matchInfo.filePath}">${path.basename(matchInfo.filePath)}</span>
+                    <span class="match-count-badge">${matchInfo.count}</span>
+                </div>
+                <div class="match-contexts">
+                    ${matches.map(m => {
+                        const beforeMatch = m.context.substring(0, m.start);
+                        const matchText = m.context.substring(m.start, m.end);
+                        const afterMatch = m.context.substring(m.end);
+                        return `
+                            <div class="match-context">
+                                ${escapeHtml(beforeMatch)}<span class="match-highlight">${escapeHtml(matchText)}</span>${escapeHtml(afterMatch)}
+                            </div>
+                        `;
+                    }).join('')}
+                </div>
+            `;
+            div.innerHTML = headerHtml;
+
+            // Click handler for opening the folder
+            div.querySelector('.match-file').addEventListener('click', () => {
+                ipcRenderer.invoke('show-in-folder', matchInfo.filePath);
+            });
+
+            resultsDiv.appendChild(div);
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        // Batched updates
+        let lineBuffer = '';
+        const BATCH_UPDATE_INTERVAL = 100;
+        let pendingText = '';
+        let updateTimeout = null;
+        let lastUpdateTime = 0;
+
+        function updateResults() {
+            if (pendingText) {
+                const now = Date.now();
+                if (now - lastUpdateTime > BATCH_UPDATE_INTERVAL) {
+                    lineBuffer += pendingText;
+                    const lines = lineBuffer.split('\n');
+                    lineBuffer = lines[lines.length - 1];
+                    const completeLines = lines.slice(0, -1).join('\n');
+                    if (completeLines) {
+                        processSearchOutput(completeLines);
+                    }
+                    pendingText = '';
+                    lastUpdateTime = now;
+                }
+            }
+        }
+
+        function batchUpdateResults() {
+            if (updateTimeout) return;
+            updateTimeout = setInterval(() => updateResults(), BATCH_UPDATE_INTERVAL);
+        }
+
+        function stopBatchUpdates() {
+            if (updateTimeout) {
+                clearInterval(updateTimeout);
+                updateTimeout = null;
+            }
+            if (pendingText || lineBuffer) {
+                processSearchOutput(lineBuffer + pendingText);
+                lineBuffer = '';
+                pendingText = '';
+            }
+        }
+
+        // Virtual scroll for file list
         function updateFileList() {
-            fileListDiv.innerHTML = '';
-            Array.from(detectedFiles).sort().forEach(filePath => {
+            const fragment = document.createDocumentFragment();
+            const sortedFiles = Array.from(detectedFiles).sort();
+
+            const itemHeight = 36;
+            const containerHeight = fileListDiv.clientHeight;
+            const visibleItems = Math.ceil(containerHeight / itemHeight);
+            const totalItems = sortedFiles.length;
+
+            const placeholder = document.createElement('div');
+            placeholder.style.height = `${totalItems * itemHeight}px`;
+            placeholder.style.margin = '0';
+
+            const scrollTop = fileListDiv.scrollTop;
+            const startIndex = Math.floor(scrollTop / itemHeight);
+            const endIndex = Math.min(startIndex + visibleItems + 5, totalItems);
+
+            for (let i = startIndex; i < endIndex; i++) {
+                const filePath = sortedFiles[i];
                 const div = document.createElement('div');
                 div.className = 'file-item';
+                div.style.top = `${i * itemHeight}px`;
                 div.innerHTML = `
                     <span class="file-icon">📄</span>
                     <span>${path.basename(filePath)}</span>
@@ -225,27 +455,28 @@
                 div.addEventListener('click', () => {
                     ipcRenderer.invoke('show-in-folder', filePath);
                 });
-                fileListDiv.appendChild(div);
-            });
+                fragment.appendChild(div);
+            }
+
+            fileListDiv.innerHTML = '';
+            fileListDiv.style.position = 'relative';
+            fileListDiv.appendChild(placeholder);
+            fileListDiv.appendChild(fragment);
         }
 
-        function processSearchOutput(text) {
-            const lines = text.split('\n');
-            let currentFile = null;
+        fileListDiv.addEventListener('scroll', () => {
+            requestAnimationFrame(updateFileList);
+        });
 
-            lines.forEach(line => {
-                if (line.startsWith('Found matches in file: ')) {
-                    currentFile = line.replace('Found matches in file: ', '').trim();
-                    detectedFiles.add(currentFile);
-                    matchCount++;
-                }
-            });
+        // Browse button
+        browseButton.addEventListener('click', async () => {
+            const directory = await ipcRenderer.invoke('select-directory');
+            if (directory) {
+                directoryInput.value = directory;
+            }
+        });
 
-            matchCountSpan.textContent = matchCount;
-            fileCountSpan.textContent = detectedFiles.size;
-            updateFileList();
-        }
-
+        // Search button
         searchButton.addEventListener('click', async () => {
             const pattern = patternInput.value.trim();
             const directory = directoryInput.value;
@@ -255,39 +486,41 @@
                 alert('Please enter a pattern and select a directory');
                 return;
             }
-
             if (sizeLimit < 1) {
                 alert('Size limit must be at least 1 MB');
                 return;
             }
 
-            // Reset counters and lists
+            // Reset state
             detectedFiles.clear();
             matchCount = 0;
             matchCountSpan.textContent = '0';
             fileCountSpan.textContent = '0';
-            
-            // Clear previous results
+            pendingText = '';
+            stopBatchUpdates();
+
+            // Clear out old results
             resultsDiv.textContent = '';
             fileListDiv.innerHTML = '';
             progressDiv.classList.add('active');
             searchButton.disabled = true;
 
             try {
+                batchUpdateResults();
                 await ipcRenderer.invoke('search-files', { pattern, directory, sizeLimit });
-            } catch (error) {
-                resultsDiv.textContent = `Error: ${error}`;
+            } catch (err) {
+                resultsDiv.textContent = 'Error: ' + err;
             } finally {
+                stopBatchUpdates();
                 progressDiv.classList.remove('active');
                 searchButton.disabled = false;
             }
         });
 
+        // Listening for streaming search progress
         ipcRenderer.on('search-progress', (event, text) => {
-            resultsDiv.textContent += text;
-            resultsDiv.scrollTop = resultsDiv.scrollHeight;
-            processSearchOutput(text);
+            pendingText += text;
         });
     </script>
 </body>
-</html> 
+</html>
