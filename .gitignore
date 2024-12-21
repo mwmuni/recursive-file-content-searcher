@@ -1,0 +1,17 @@
+# Rust
+/target
+**/*.rs.bk
+Cargo.lock
+
+# Node/Electron
+electron-ui/node_modules/
+electron-ui/dist/
+electron-ui/.cache/
+
+# IDEs and editors
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db

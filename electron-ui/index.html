@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Filesystem Searcher</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+            margin: 0;
+            padding: 16px;
+            background-color: #f5f5f5;
+            height: 100vh;
+            box-sizing: border-box;
+            overflow: hidden;
+        }
+        * {
+            box-sizing: border-box;
+        }
+        .container {
+            max-width: none;
+            margin: 0;
+            background-color: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            height: calc(100vh - 32px);
+            display: flex;
+            flex-direction: column;
+        }
+        h1 {
+            margin-top: 0;
+            margin-bottom: 16px;
+        }
+        .search-form {
+            display: grid;
+            grid-template-columns: 1fr auto;
+            gap: 10px;
+            margin-bottom: 12px;
+        }
+        .input-group {
+            display: grid;
+            grid-template-columns: 1fr 1fr 150px;
+            gap: 10px;
+            align-items: start;
+        }
+        .input-field {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+        .input-field label {
+            font-size: 12px;
+            font-weight: 500;
+            color: #666;
+        }
+        .input-field .input-row {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+        input[type="text"], input[type="number"] {
+            padding: 8px 12px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+            width: 100%;
+        }
+        input[type="text"]:focus, input[type="number"]:focus {
+            outline: none;
+            border-color: #0066cc;
+            box-shadow: 0 0 0 2px rgba(0,102,204,0.1);
+        }
+        .tooltip {
+            font-size: 12px;
+            color: #666;
+            margin-top: 2px;
+            font-style: italic;
+        }
+        button {
+            padding: 8px 16px;
+            background-color: #0066cc;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: background-color 0.2s;
+            white-space: nowrap;
+        }
+        button:hover {
+            background-color: #0052a3;
+        }
+        button:disabled {
+            background-color: #cccccc;
+            cursor: not-allowed;
+        }
+        .results-container {
+            display: grid;
+            grid-template-columns: 1fr 300px;
+            gap: 20px;
+            flex-grow: 1;
+            min-height: 0;
+        }
+        #results {
+            white-space: pre-wrap;
+            font-family: monospace;
+            background-color: #f8f9fa;
+            padding: 15px;
+            border-radius: 4px;
+            overflow-y: auto;
+            font-size: 13px;
+            line-height: 1.4;
+        }
+        .file-list {
+            background-color: #f8f9fa;
+            padding: 12px;
+            border-radius: 4px;
+            overflow-y: auto;
+        }
+        .file-item {
+            padding: 8px;
+            border-bottom: 1px solid #ddd;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .file-item:hover {
+            background-color: #e9ecef;
+        }
+        .file-item:last-child {
+            border-bottom: none;
+        }
+        .file-icon {
+            color: #0066cc;
+            font-size: 16px;
+        }
+        .progress {
+            margin: 8px 0;
+            display: none;
+            color: #666;
+        }
+        .progress.active {
+            display: block;
+        }
+        .stats {
+            color: #666;
+            font-size: 14px;
+            margin: 8px 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Filesystem Searcher</h1>
+        <div class="search-form">
+            <div class="input-group">
+                <div class="input-field">
+                    <label for="pattern">Search Pattern</label>
+                    <input type="text" id="pattern" placeholder="Enter regex pattern">
+                    <div class="tooltip">Regular expression pattern to search for in files</div>
+                </div>
+                <div class="input-field">
+                    <label for="directory">Search Directory</label>
+                    <div class="input-row">
+                        <input type="text" id="directory" placeholder="Select directory" readonly>
+                        <button id="browse">Browse</button>
+                    </div>
+                    <div class="tooltip">Directory to search in (click Browse to select)</div>
+                </div>
+                <div class="input-field">
+                    <label for="sizeLimit">File Size Limit</label>
+                    <input type="number" id="sizeLimit" placeholder="Size limit" value="1000" min="1" max="100000">
+                    <div class="tooltip">Maximum file size in MB (1-100,000)</div>
+                </div>
+            </div>
+            <button id="search">Search</button>
+        </div>
+        <div class="progress">
+            <p>Searching files...</p>
+        </div>
+        <div class="stats">
+            <span id="matchCount">0</span> matches in <span id="fileCount">0</span> files
+        </div>
+        <div class="results-container">
+            <div id="results"></div>
+            <div class="file-list" id="fileList"></div>
+        </div>
+    </div>
+
+    <script>
+        const { ipcRenderer } = require('electron');
+        const path = require('path');
+        
+        const patternInput = document.getElementById('pattern');
+        const directoryInput = document.getElementById('directory');
+        const sizeLimitInput = document.getElementById('sizeLimit');
+        const browseButton = document.getElementById('browse');
+        const searchButton = document.getElementById('search');
+        const resultsDiv = document.getElementById('results');
+        const fileListDiv = document.getElementById('fileList');
+        const progressDiv = document.querySelector('.progress');
+        const matchCountSpan = document.getElementById('matchCount');
+        const fileCountSpan = document.getElementById('fileCount');
+
+        let detectedFiles = new Set();
+        let matchCount = 0;
+
+        browseButton.addEventListener('click', async () => {
+            const directory = await ipcRenderer.invoke('select-directory');
+            if (directory) {
+                directoryInput.value = directory;
+            }
+        });
+
+        function updateFileList() {
+            fileListDiv.innerHTML = '';
+            Array.from(detectedFiles).sort().forEach(filePath => {
+                const div = document.createElement('div');
+                div.className = 'file-item';
+                div.innerHTML = `
+                    <span class="file-icon">📄</span>
+                    <span>${path.basename(filePath)}</span>
+                `;
+                div.title = filePath;
+                div.addEventListener('click', () => {
+                    ipcRenderer.invoke('show-in-folder', filePath);
+                });
+                fileListDiv.appendChild(div);
+            });
+        }
+
+        function processSearchOutput(text) {
+            const lines = text.split('\n');
+            let currentFile = null;
+
+            lines.forEach(line => {
+                if (line.startsWith('Found matches in file: ')) {
+                    currentFile = line.replace('Found matches in file: ', '').trim();
+                    detectedFiles.add(currentFile);
+                    matchCount++;
+                }
+            });
+
+            matchCountSpan.textContent = matchCount;
+            fileCountSpan.textContent = detectedFiles.size;
+            updateFileList();
+        }
+
+        searchButton.addEventListener('click', async () => {
+            const pattern = patternInput.value.trim();
+            const directory = directoryInput.value;
+            const sizeLimit = parseInt(sizeLimitInput.value) || 1000;
+
+            if (!pattern || !directory) {
+                alert('Please enter a pattern and select a directory');
+                return;
+            }
+
+            if (sizeLimit < 1) {
+                alert('Size limit must be at least 1 MB');
+                return;
+            }
+
+            // Reset counters and lists
+            detectedFiles.clear();
+            matchCount = 0;
+            matchCountSpan.textContent = '0';
+            fileCountSpan.textContent = '0';
+            
+            // Clear previous results
+            resultsDiv.textContent = '';
+            fileListDiv.innerHTML = '';
+            progressDiv.classList.add('active');
+            searchButton.disabled = true;
+
+            try {
+                await ipcRenderer.invoke('search-files', { pattern, directory, sizeLimit });
+            } catch (error) {
+                resultsDiv.textContent = `Error: ${error}`;
+            } finally {
+                progressDiv.classList.remove('active');
+                searchButton.disabled = false;
+            }
+        });
+
+        ipcRenderer.on('search-progress', (event, text) => {
+            resultsDiv.textContent += text;
+            resultsDiv.scrollTop = resultsDiv.scrollHeight;
+            processSearchOutput(text);
+        });
+    </script>
+</body>
+</html> 

@@ -1,0 +1,37 @@
+{
+  "name": "filesystem-searcher-ui",
+  "version": "1.0.0",
+  "description": "Electron UI for filesystem-searcher",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "build": "electron-builder --dir",
+    "postinstall": "electron-builder install-app-deps"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "electron": "^27.1.0",
+    "electron-builder": "^24.9.1"
+  },
+  "build": {
+    "appId": "com.filesystemsearcher.app",
+    "productName": "Filesystem Searcher",
+    "asar": true,
+    "compression": "maximum",
+    "directories": {
+      "buildResources": "build",
+      "output": "dist"
+    },
+    "files": [
+      "main.js",
+      "index.html"
+    ],
+    "extraResources": [
+      {
+        "from": "../target/release/",
+        "to": "bin",
+        "filter": ["filesystem-searcher.exe"]
+      }
+    ]
+  }
+} 
