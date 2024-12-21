@@ -1,5 +1,7 @@
 # Filesystem Searcher
 
+![image](https://github.com/user-attachments/assets/e28ada71-077e-4776-864c-1b70e997ee74)
+
 A fast, cross-platform tool for searching file contents using regular expressions. Built with Rust and Electron.
 
 ## Features
