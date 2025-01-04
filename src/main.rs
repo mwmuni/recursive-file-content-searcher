@@ -2,7 +2,7 @@ use std::env;
 use std::io;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicUsize, Ordering, AtomicBool};
 
 use tokio::sync::{mpsc, Mutex, Semaphore};
 use tokio::time::Instant;
@@ -12,6 +12,22 @@ use num_cpus;
 
 use indicatif::{ProgressBar, ProgressStyle};
 use walkdir::WalkDir;
+use serde::Deserialize;
+use semver::Version;
+
+const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION"); // Replace hard-coded version with Cargo.toml reference
+const REPO_OWNER: &str = "mwmuni";
+const REPO_NAME: &str = "recursive-file-content-searcher";
+
+#[derive(Deserialize, Debug)]
+struct GitHubRelease {
+    tag_name: String,
+    html_url: String,
+    #[serde(default)]
+    body: String,
+    #[serde(default)]
+    name: String,
+}
 
 #[derive(Debug)]
 struct MatchContext {
@@ -54,10 +70,11 @@ fn get_context(line: &str, match_start: usize, match_end: usize, context_size: u
 }
 
 fn print_usage() {
-    eprintln!("Usage: <regex_pattern> [starting_path] [size_limit_mb]");
+    eprintln!("Usage: <regex_pattern> [starting_path] [size_limit_mb] [file_pattern]");
     eprintln!("  regex_pattern: Pattern to search for");
     eprintln!("  starting_path: Directory to start search from (default: current directory)");
     eprintln!("  size_limit_mb: Maximum file size in MB to search (default: 1000)");
+    eprintln!("  file_pattern: Optional regex pattern to filter files by name");
 }
 
 /// This function does a blocking traversal (using `walkdir`) of all files.
@@ -66,11 +83,16 @@ fn blocking_enumerate_dirs(
     file_tx: mpsc::Sender<PathBuf>,
     progress_bar: &ProgressBar,
     size_limit_bytes: u64,
+    should_stop: Arc<AtomicBool>,
+    file_pattern: Option<Regex>,  // Add this parameter
 ) -> io::Result<()> {
     for entry_res in WalkDir::new(&start_dir)
         .follow_links(false)
         .into_iter()
     {
+        if should_stop.load(Ordering::Relaxed) {
+            break;
+        }
         let entry = match entry_res {
             Ok(e) => e,
             Err(e) => {
@@ -81,6 +103,13 @@ fn blocking_enumerate_dirs(
 
         if !entry.file_type().is_file() {
             continue;
+        }
+
+        // Add file pattern check
+        if let Some(pattern) = &file_pattern {
+            if !pattern.is_match(&entry.path().to_string_lossy()) {
+                continue;
+            }
         }
 
         let md = match entry.metadata() {
@@ -106,14 +135,70 @@ fn blocking_enumerate_dirs(
     Ok(())
 }
 
+async fn check_for_updates() -> Result<(), Box<dyn std::error::Error>> {
+    let client = reqwest::Client::new();
+    let url = format!(
+        "https://api.github.com/repos/{}/{}/releases/latest",
+        REPO_OWNER, REPO_NAME
+    );
+
+    println!("Checking for updates...");  // Debug output
+    
+    let response = client
+        .get(&url)
+        .header("User-Agent", "recursive-file-content-searcher")
+        .header("Accept", "application/vnd.github.v3+json")
+        .send()
+        .await?;
+
+    if !response.status().is_success() {
+        println!("Failed to check for updates: HTTP {}", response.status());
+        println!("Response: {}", response.text().await?);
+        return Ok(());
+    }
+
+    match response.json::<GitHubRelease>().await {
+        Ok(release) => {
+            let tag = release.tag_name.trim_start_matches('v');
+            println!("Found latest version: {}", tag);  // Debug output
+            
+            let current = Version::parse(CURRENT_VERSION)?;
+            let latest = Version::parse(tag)?;
+
+            println!("Current version: {}", current);  // Debug output
+            println!("Latest version: {}", latest);   // Debug output
+
+            if latest > current {
+                println!("\nNew version available: {} (current: {})", latest, current);
+                println!("Download: {}", release.html_url);
+            } else {
+                println!("You are running the latest version ({})", current);
+            }
+        }
+        Err(e) => {
+            println!("Failed to parse release info: {}", e);
+            return Err(e.into());
+        }
+    }
+
+    Ok(())
+}
+
 #[tokio::main(flavor = "multi_thread", worker_threads = 32)]
 async fn main() -> io::Result<()> {
     let args: Vec<String> = env::args().collect();
-    let (pattern, start_path, size_limit_mb) = if cfg!(debug_assertions) {
+    
+    // Check for updates before proceeding
+    if let Err(e) = check_for_updates().await {
+        eprintln!("Error checking for updates: {}", e);
+    }
+
+    let (pattern, start_path, size_limit_mb, file_pattern) = if cfg!(debug_assertions) {
         (
             args.get(1).unwrap_or(&String::from("lmao")).to_string(),
             PathBuf::from(args.get(2).unwrap_or(&String::from("C:/Users/matt_/Documents"))),
             args.get(3).and_then(|s| s.parse::<u64>().ok()).unwrap_or(1000),
+            args.get(4).and_then(|s| Regex::new(s).ok()),
         )
     } else {
         if args.len() < 2 {
@@ -124,6 +209,7 @@ async fn main() -> io::Result<()> {
             args[1].clone(),
             PathBuf::from(args.get(2).unwrap_or(&String::from("."))),
             args.get(3).and_then(|s| s.parse::<u64>().ok()).unwrap_or(1000),
+            args.get(4).and_then(|s| Regex::new(s).ok()),
         )
     };
 
@@ -156,9 +242,20 @@ async fn main() -> io::Result<()> {
             .progress_chars("##-"),
     );
 
+    let should_stop = Arc::new(AtomicBool::new(false));
+    let should_stop_clone = Arc::clone(&should_stop);
+
+    // Set up ctrl+c handler
+    tokio::spawn(async move {
+        if let Ok(()) = tokio::signal::ctrl_c().await {
+            should_stop_clone.store(true, Ordering::Relaxed);
+        }
+    });
+
     let pb_for_enum = Arc::clone(&progress_bar);
+    let should_stop_enum = Arc::clone(&should_stop);
     let enum_handle = tokio::task::spawn_blocking(move || {
-        let _ = blocking_enumerate_dirs(start_path, file_tx, &pb_for_enum, size_limit_bytes);
+        let _ = blocking_enumerate_dirs(start_path, file_tx, &pb_for_enum, size_limit_bytes, should_stop_enum, file_pattern);
     });
 
     let num_workers = num_cpus::get();
@@ -172,12 +269,17 @@ async fn main() -> io::Result<()> {
         let file_rx = Arc::clone(&file_rx);
         let pb_for_worker = Arc::clone(&progress_bar);
         let total_matches = Arc::clone(&total_matches);
+        let should_stop_worker = Arc::clone(&should_stop);
 
         let handle = tokio::spawn(async move {
             while let Some(file_path) = {
                 let mut rx = file_rx.lock().await;
                 rx.recv().await
             } {
+                if should_stop_worker.load(Ordering::Relaxed) {
+                    break;
+                }
+
                 let _permit = sem.acquire().await.unwrap();
                 pb_for_worker.inc(1);
 
@@ -234,7 +336,12 @@ async fn main() -> io::Result<()> {
 
     let detected_files = result_reader.await.unwrap_or_default();
 
-    progress_bar.finish_with_message("All files processed!");
+    if should_stop.load(Ordering::Relaxed) {
+        progress_bar.finish_with_message("Search cancelled!");
+        println!("\nSearch cancelled by user.");
+    } else {
+        progress_bar.finish_with_message("All files processed!");
+    }
 
     let elapsed = start_time.elapsed();
     println!("\nSearch completed in {elapsed:.2?}");

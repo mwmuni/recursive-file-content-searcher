@@ -1,17 +1,21 @@
 {
   "name": "filesystem-searcher-ui",
-  "version": "1.0.0",
+  "version": "0.2.0",
   "description": "Electron UI for filesystem-searcher",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
-    "build": "electron-builder --dir",
+    "clean": "rimraf --max-retries=3 dist || exit 0",
+    "build": "npm run clean && electron-builder --dir",
     "postinstall": "electron-builder install-app-deps"
   },
-  "dependencies": {},
+  "dependencies": {
+    "semver": "^7.6.3"
+  },
   "devDependencies": {
     "electron": "^27.1.0",
-    "electron-builder": "^24.9.1"
+    "electron-builder": "^24.9.1",
+    "rimraf": "^5.0.0"
   },
   "build": {
     "appId": "com.filesystemsearcher.app",
@@ -30,8 +34,10 @@
       {
         "from": "../target/release/",
         "to": "bin",
-        "filter": ["filesystem-searcher.exe"]
+        "filter": [
+          "filesystem-searcher.exe"
+        ]
       }
     ]
   }
-} 
+}

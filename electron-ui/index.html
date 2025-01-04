@@ -35,7 +35,7 @@
         }
         .input-group {
             display: grid;
-            grid-template-columns: 1fr 1fr 150px;
+            grid-template-columns: 1fr 1fr 1fr 150px;
             gap: 10px;
         }
         .input-field {
@@ -227,11 +227,106 @@
             color: #007bff;
             font-size: 16px;
         }
+
+        .button-group {
+            display: flex;
+            gap: 8px;
+        }
+
+        .stop-button {
+            background-color: #dc3545;
+        }
+        
+        .stop-button:hover {
+            background-color: #c82333;
+        }
+        
+        input[type="text"].invalid {
+            border-color: #dc3545;
+            background-color: #fff8f8;
+        }
+        
+        input[type="text"].invalid:focus {
+            border-color: #dc3545;
+            box-shadow: 0 0 0 2px rgba(220,53,69,0.1);
+        }
+        
+        .error-message {
+            color: #dc3545;
+            font-size: 12px;
+            margin-top: 4px;
+        }
+
+        .alert-overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.5);
+            z-index: 1000;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .alert-box {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+            max-width: 400px;
+            width: 100%;
+        }
+
+        .alert-message {
+            margin-bottom: 16px;
+            color: #333;
+        }
+
+        .alert-button {
+            width: 100%;
+            padding: 8px;
+            background: #007bff;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+
+        .alert-button:hover {
+            background: #0056b3;
+        }
+
+        .header-container {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 12px;
+        }
+
+        .version-info {
+            font-size: 13px;
+            color: #0366d6;
+            font-weight: 500;
+        }
+
+        .version-info a {
+            color: inherit;
+            text-decoration: none;
+        }
+
+        .version-info a:hover {
+            text-decoration: underline;
+        }
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>Filesystem Searcher</h1>
+        <div class="header-container">
+            <h1>Filesystem Searcher</h1>
+            <span class="version-info" id="versionInfo"></span>
+        </div>
         <!-- SEARCH FORM -->
         <div class="search-form">
             <div class="input-group">
@@ -241,12 +336,17 @@
                     <div class="tooltip">Regular expression pattern to search for in files</div>
                 </div>
                 <div class="input-field">
+                    <label for="filePattern">File Pattern (Optional)</label>
+                    <input type="text" id="filePattern" placeholder="Regex for file paths">
+                    <div class="tooltip">Optional regex pattern to filter file paths</div>
+                </div>
+                <div class="input-field">
                     <label for="directory">Search Directory</label>
                     <div class="input-row">
-                        <input type="text" id="directory" placeholder="Select directory" readonly>
+                        <input type="text" id="directory" placeholder="Enter or select directory">
                         <button id="browse">Browse</button>
                     </div>
-                    <div class="tooltip">Directory to search in (click Browse to select)</div>
+                    <div class="tooltip" id="directoryError"></div>
                 </div>
                 <div class="input-field">
                     <label for="sizeLimit">File Size Limit</label>
@@ -254,7 +354,10 @@
                     <div class="tooltip">Maximum file size in MB (1-100,000)</div>
                 </div>
             </div>
-            <button id="search">Search</button>
+            <div class="button-group">
+                <button id="search">Search</button>
+                <button id="stop" class="stop-button" disabled>Stop</button>
+            </div>
         </div>
 
         <!-- PROGRESS & STATS -->
@@ -263,12 +366,20 @@
         </div>
         <div class="stats">
             <span id="matchCount">0</span> matches in <span id="fileCount">0</span> files
+            <span id="searchTime" style="margin-left: 12px; color: #666;"></span>
         </div>
 
         <!-- RESULTS -->
         <div class="results-container">
             <div id="results"></div>
             <div class="file-list" id="fileList"></div>
+        </div>
+    </div>
+
+    <div class="alert-overlay" id="alertOverlay">
+        <div class="alert-box">
+            <div class="alert-message" id="alertMessage"></div>
+            <button class="alert-button" id="alertButton">OK</button>
         </div>
     </div>
 
@@ -282,14 +393,27 @@
         const sizeLimitInput = document.getElementById('sizeLimit');
         const browseButton = document.getElementById('browse');
         const searchButton = document.getElementById('search');
+        const stopButton = document.getElementById('stop');
         const resultsDiv = document.getElementById('results');
         const fileListDiv = document.getElementById('fileList');
         const progressDiv = document.querySelector('.progress');
         const matchCountSpan = document.getElementById('matchCount');
         const fileCountSpan = document.getElementById('fileCount');
+        const filePatternInput = document.getElementById('filePattern');
+        const searchTimeSpan = document.getElementById('searchTime');
+        let searchStartTime = null;
 
         let detectedFiles = new Set();
         let matchCount = 0;
+        let searchProcess = null;
+        
+        const directoryError = document.getElementById('directoryError');
+
+        const alertOverlay = document.getElementById('alertOverlay');
+        const alertMessage = document.getElementById('alertMessage');
+        const alertButton = document.getElementById('alertButton');
+
+        const versionInfo = document.getElementById('versionInfo');
 
         // (Optional) helper to remove extra blank lines/spaces from match context
         function sanitizeContextText(text) {
@@ -473,6 +597,7 @@
             const directory = await ipcRenderer.invoke('select-directory');
             if (directory) {
                 directoryInput.value = directory;
+                await validatePath(directory);
             }
         });
 
@@ -481,13 +606,21 @@
             const pattern = patternInput.value.trim();
             const directory = directoryInput.value;
             const sizeLimit = parseInt(sizeLimitInput.value) || 1000;
+            const filePattern = filePatternInput.value.trim() || null;
 
-            if (!pattern || !directory) {
-                alert('Please enter a pattern and select a directory');
+            if (!pattern) {
+                await showAlert('Please enter a search pattern');
                 return;
             }
+            
+            // Validate directory before searching
+            if (!directory || !(await validatePath(directory))) {
+                await showAlert('Please enter a valid directory path');
+                return;
+            }
+            
             if (sizeLimit < 1) {
-                alert('Size limit must be at least 1 MB');
+                await showAlert('Size limit must be at least 1 MB');
                 return;
             }
 
@@ -496,30 +629,113 @@
             matchCount = 0;
             matchCountSpan.textContent = '0';
             fileCountSpan.textContent = '0';
+            searchTimeSpan.textContent = '';
             pendingText = '';
             stopBatchUpdates();
+
+            // Start timer
+            searchStartTime = performance.now();
 
             // Clear out old results
             resultsDiv.textContent = '';
             fileListDiv.innerHTML = '';
             progressDiv.classList.add('active');
+            
+            // Update button states
             searchButton.disabled = true;
+            stopButton.disabled = false;
 
             try {
                 batchUpdateResults();
-                await ipcRenderer.invoke('search-files', { pattern, directory, sizeLimit });
+                searchProcess = ipcRenderer.invoke('search-files', { 
+                    pattern, 
+                    directory, 
+                    sizeLimit,
+                    filePattern
+                });
+                await searchProcess;
             } catch (err) {
-                resultsDiv.textContent = 'Error: ' + err;
+                if (err !== 'cancelled') {
+                    resultsDiv.textContent = 'Error: ' + err;
+                }
             } finally {
+                // Calculate elapsed time
+                const elapsed = ((performance.now() - searchStartTime) / 1000).toFixed(2);
+                searchTimeSpan.textContent = `(Search took ${elapsed}s)`;
+                
                 stopBatchUpdates();
                 progressDiv.classList.remove('active');
                 searchButton.disabled = false;
+                stopButton.disabled = true;
+                searchProcess = null;
+            }
+        });
+
+        // Add stop button click handler:
+        stopButton.addEventListener('click', () => {
+            if (searchProcess) {
+                const elapsed = ((performance.now() - searchStartTime) / 1000).toFixed(2);
+                searchTimeSpan.textContent = `(Cancelled after ${elapsed}s)`;
+                ipcRenderer.invoke('stop-search');
+                stopButton.disabled = true;
+            }
+        });
+
+        // Add path validation function
+        async function validatePath(path) {
+            try {
+                const isValid = await ipcRenderer.invoke('validate-path', path);
+                directoryInput.classList.toggle('invalid', !isValid);
+                directoryError.textContent = isValid ? '' : 'Directory not found';
+                directoryError.classList.toggle('error-message', !isValid);
+                return isValid;
+            } catch (err) {
+                directoryInput.classList.add('invalid');
+                directoryError.textContent = 'Invalid path';
+                directoryError.classList.add('error-message');
+                return false;
+            }
+        }
+
+        // Update directory input handling
+        directoryInput.removeAttribute('readonly'); // Make input editable
+        
+        // Add input validation on change
+        directoryInput.addEventListener('input', async (e) => {
+            await validatePath(e.target.value);
+        });
+
+        // Add custom alert function
+        function showAlert(message) {
+            alertMessage.textContent = message;
+            alertOverlay.style.display = 'flex';
+            return new Promise(resolve => {
+                const handleClick = () => {
+                    alertOverlay.style.display = 'none';
+                    alertButton.removeEventListener('click', handleClick);
+                    resolve();
+                };
+                alertButton.addEventListener('click', handleClick);
+            });
+        }
+
+        // Optional: Close alert on Escape key
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && alertOverlay.style.display === 'flex') {
+                alertOverlay.style.display = 'none';
             }
         });
 
         // Listening for streaming search progress
         ipcRenderer.on('search-progress', (event, text) => {
             pendingText += text;
+        });
+
+        // Add version check listener
+        ipcRenderer.on('version-check', (event, { hasUpdate, currentVersion, latestVersion, downloadUrl }) => {
+            if (hasUpdate) {
+                versionInfo.innerHTML = `<a href="${downloadUrl}" title="Click to download">(New version available! ${currentVersion} → ${latestVersion})</a>`;
+            }
         });
     </script>
 </body>
