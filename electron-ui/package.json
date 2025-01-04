@@ -1,6 +1,6 @@
 {
   "name": "filesystem-searcher-ui",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Electron UI for filesystem-searcher",
   "main": "main.js",
   "scripts": {

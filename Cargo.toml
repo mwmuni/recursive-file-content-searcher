@@ -1,6 +1,6 @@
 [package]
 name = "filesystem-searcher"
-version = "0.2.0"  # Make sure this matches CURRENT_VERSION in main.rs
+version = "0.2.1"  # Make sure this matches CURRENT_VERSION in main.rs
 edition = "2021"
 
 [dependencies]
