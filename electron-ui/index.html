@@ -432,6 +432,12 @@
                 const line = lines[i].trim();
                 if (!line) continue;
 
+                // 1) Look for the final marker
+                if (line.includes('ALL_FILES_PROCESSED')) {
+                    finalizeUI();
+                    continue;
+                }
+
                 const matchCountRegex = /Found (\d+) matches? in file: (.*)/;
                 const match = line.match(matchCountRegex);
 
@@ -469,36 +475,93 @@
             updateFileList();
         }
 
+        // 1) Define a maximum number of matches per file
+        const MAX_CONTEXTS_PER_FILE = 20;
+
+        // 1) Add a global limit on contexts
+        const MAX_TOTAL_CONTEXTS = 2000;
+        let totalRenderedContexts = 0;
+        let truncated = false;
+
         function appendMatchGroup(matchInfo, matches) {
+            if (truncated) return; // Bail if we already hit our limit
+
             const div = document.createElement('div');
             div.className = 'match-entry';
 
+            const displayed = [];
+            for (let m of matches) {
+                if (totalRenderedContexts < MAX_TOTAL_CONTEXTS) {
+                    displayed.push(m);
+                    totalRenderedContexts++;
+                } else {
+                    truncated = true;
+                    break;
+                }
+            }
+
+            const hidden = matches.slice(displayed.length);
             const headerHtml = `
                 <div class="match-file-header">
                     <span class="match-file" title="${matchInfo.filePath}">${path.basename(matchInfo.filePath)}</span>
                     <span class="match-count-badge">${matchInfo.count}</span>
                 </div>
                 <div class="match-contexts">
-                    ${matches.map(m => {
-                        const beforeMatch = m.context.substring(0, m.start);
-                        const matchText = m.context.substring(m.start, m.end);
-                        const afterMatch = m.context.substring(m.end);
-                        return `
-                            <div class="match-context">
-                                ${escapeHtml(beforeMatch)}<span class="match-highlight">${escapeHtml(matchText)}</span>${escapeHtml(afterMatch)}
-                            </div>
-                        `;
-                    }).join('')}
+                    ${generateMatchContexts(displayed)}
+                    ${
+                        hidden.length > 0 && !truncated
+                            ? '<button class="show-more-button">Show more</button>'
+                            : ''
+                    }
+                    ${
+                        truncated
+                            ? '<div style="color:red; margin:8px;">[Results truncated: too many matches]</div>'
+                            : ''
+                    }
                 </div>
             `;
             div.innerHTML = headerHtml;
 
-            // Click handler for opening the folder
+            // ...existing code...
             div.querySelector('.match-file').addEventListener('click', () => {
                 ipcRenderer.invoke('show-in-folder', matchInfo.filePath);
             });
 
+            // If still not truncated, show remainder if user clicks "Show more"
+            if (hidden.length > 0 && !truncated) {
+                div.querySelector('.show-more-button').addEventListener('click', () => {
+                    const container = div.querySelector('.match-contexts');
+                    container.removeChild(container.querySelector('.show-more-button'));
+                    for (let m of hidden) {
+                        if (totalRenderedContexts < MAX_TOTAL_CONTEXTS) {
+                            container.insertAdjacentHTML('beforeend', generateMatchContexts([m]));
+                            totalRenderedContexts++;
+                        } else {
+                            truncated = true;
+                            container.insertAdjacentHTML('beforeend', '<div style="color:red; margin:8px;">[Results truncated: too many matches]</div>');
+                            break;
+                        }
+                    }
+                });
+            }
+
             resultsDiv.appendChild(div);
+        }
+
+        // Helper to generate match contexts
+        function generateMatchContexts(matches) {
+            return matches.map(m => {
+                const beforeMatch = m.context.substring(0, m.start);
+                const matchText = m.context.substring(m.start, m.end);
+                const afterMatch = m.context.substring(m.end);
+                return `
+                    <div class="match-context">
+                        ${escapeHtml(beforeMatch)}
+                        <span class="match-highlight">${escapeHtml(matchText)}</span>
+                        ${escapeHtml(afterMatch)}
+                    </div>
+                `;
+            }).join('');
         }
 
         function escapeHtml(text) {
@@ -737,6 +800,15 @@
                 versionInfo.innerHTML = `<a href="${downloadUrl}" title="Click to download">(New version available! ${currentVersion} → ${latestVersion})</a>`;
             }
         });
+
+        // 2) Finalize the UI to indicate search done
+        function finalizeUI() {
+            stopBatchUpdates();
+            progressDiv.classList.remove('active');
+            searchButton.disabled = false;
+            stopButton.disabled = true;
+            // Additional UI updates if needed
+        }
     </script>
 </body>
 </html>

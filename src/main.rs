@@ -3,6 +3,7 @@ use std::io;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering, AtomicBool};
+use std::io::Write;
 
 use tokio::sync::{mpsc, Mutex, Semaphore};
 use tokio::time::Instant;
@@ -43,6 +44,29 @@ struct FileMatch {
     matches: Vec<MatchContext>,
 }
 
+/// Adjusts the start index to the nearest previous char boundary
+fn adjust_start(line: &str, index: usize) -> usize {
+    if line.is_char_boundary(index) {
+        index
+    } else {
+        (0..=index).rev().find(|&i| line.is_char_boundary(i)).unwrap_or(0)
+    }
+}
+
+/// Adjusts the end index to the nearest next char boundary
+fn adjust_end(line: &str, index: usize) -> usize {
+    if line.is_char_boundary(index) {
+        index
+    } else {
+        for i in index..=line.len() {
+            if line.is_char_boundary(i) {
+                return i;
+            }
+        }
+        line.len()
+    }
+}
+
 fn get_context(line: &str, match_start: usize, match_end: usize, context_size: usize) -> MatchContext {
     let start = if match_start > context_size {
         match_start - context_size
@@ -50,17 +74,21 @@ fn get_context(line: &str, match_start: usize, match_end: usize, context_size: u
         0
     };
     let end = std::cmp::min(match_end + context_size, line.len());
-    
+
+    // Adjust start and end to char boundaries
+    let start = adjust_start(line, start);
+    let end = adjust_end(line, end);
+
     // Find word boundaries or use exact positions
-    let context_start = line[start..match_start]
-        .rfind(char::is_whitespace)
-        .map(|i| start + i + 1)
-        .unwrap_or(start);
+    let context_start = match line[start..match_start].rfind(char::is_whitespace) {
+        Some(i) => adjust_start(line, start + i + 1),
+        None => start,
+    };
         
-    let context_end = line[match_end..end]
-        .find(char::is_whitespace)
-        .map(|i| match_end + i)
-        .unwrap_or(end);
+    let context_end = match line[match_end..end].find(char::is_whitespace) {
+        Some(i) => adjust_end(line, match_end + i),
+        None => end,
+    };
 
     MatchContext {
         text: line[context_start..context_end].to_string(),
@@ -317,9 +345,11 @@ async fn main() -> io::Result<()> {
         let mut detected_files = Vec::new();
         while let Some(file_match) = result_rx.recv().await {
             println!("Found {} matches in file: {}", file_match.match_count, file_match.path);
+            std::io::stdout().flush().ok(); // <-- flush after printing a file match
             for context in file_match.matches {
                 println!("  Context: {}", context.text);
                 println!("  Match position: {}..{}", context.start, context.end);
+                std::io::stdout().flush().ok();
             }
             detected_files.push(file_match.path.clone());
         }
@@ -339,8 +369,11 @@ async fn main() -> io::Result<()> {
     if should_stop.load(Ordering::Relaxed) {
         progress_bar.finish_with_message("Search cancelled!");
         println!("\nSearch cancelled by user.");
+        std::io::stdout().flush().ok(); // <-- flush if search is cancelled
     } else {
         progress_bar.finish_with_message("All files processed!");
+        println!("ALL_FILES_PROCESSED");
+        std::io::stdout().flush().ok(); // <-- flush the final marker line
     }
 
     let elapsed = start_time.elapsed();

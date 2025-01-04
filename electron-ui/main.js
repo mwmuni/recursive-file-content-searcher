@@ -115,12 +115,13 @@ ipcMain.handle('search-files', async (event, { pattern, directory, sizeLimit, fi
         const searcher = spawn(getBinaryPath(), args);
         currentSearchProcess = searcher;
 
-        let output = '';
+        // Remove output accumulation
+        // let output = ''; // Removed
         let error = '';
 
         searcher.stdout.on('data', (data) => {
             const text = data.toString();
-            output += text;
+            // output += text; // Removed
             mainWindow.webContents.send('search-progress', text);
         });
 
@@ -131,7 +132,7 @@ ipcMain.handle('search-files', async (event, { pattern, directory, sizeLimit, fi
         searcher.on('close', (code) => {
             currentSearchProcess = null;
             if (code === 0) {
-                resolve(output);
+                resolve(); // Resolve without output
             } else {
                 reject(error || 'Search process failed');
             }
