@@ -432,9 +432,7 @@
                 const line = lines[i].trim();
                 if (!line) continue;
 
-                // 1) Look for the final marker
                 if (line.includes('ALL_FILES_PROCESSED')) {
-                    finalizeUI();
                     continue;
                 }
 
@@ -577,6 +575,20 @@
         let updateTimeout = null;
         let lastUpdateTime = 0;
 
+        function setSearchUiState(isSearching) {
+            progressDiv.classList.toggle('active', isSearching);
+            searchButton.disabled = isSearching;
+            stopButton.disabled = !isSearching;
+        }
+
+        function getElapsedSeconds() {
+            if (searchStartTime === null) {
+                return '0.00';
+            }
+
+            return ((performance.now() - searchStartTime) / 1000).toFixed(2);
+        }
+
         function updateResults() {
             if (pendingText) {
                 const now = Date.now();
@@ -694,6 +706,10 @@
             fileCountSpan.textContent = '0';
             searchTimeSpan.textContent = '';
             pendingText = '';
+            lineBuffer = '';
+            lastUpdateTime = 0;
+            totalRenderedContexts = 0;
+            truncated = false;
             stopBatchUpdates();
 
             // Start timer
@@ -702,11 +718,9 @@
             // Clear out old results
             resultsDiv.textContent = '';
             fileListDiv.innerHTML = '';
-            progressDiv.classList.add('active');
-            
-            // Update button states
-            searchButton.disabled = true;
-            stopButton.disabled = false;
+            setSearchUiState(true);
+
+            let searchStatus = 'completed';
 
             try {
                 batchUpdateResults();
@@ -716,31 +730,31 @@
                     sizeLimit,
                     filePattern
                 });
-                await searchProcess;
+                const result = await searchProcess;
+                searchStatus = result?.status || 'completed';
+
+                if (searchStatus === 'cancelled') {
+                    searchTimeSpan.textContent = `(Cancelled after ${getElapsedSeconds()}s)`;
+                }
             } catch (err) {
+                searchStatus = 'failed';
                 if (err !== 'cancelled') {
                     resultsDiv.textContent = 'Error: ' + err;
                 }
             } finally {
-                // Calculate elapsed time
-                const elapsed = ((performance.now() - searchStartTime) / 1000).toFixed(2);
-                searchTimeSpan.textContent = `(Search took ${elapsed}s)`;
-                
-                stopBatchUpdates();
-                progressDiv.classList.remove('active');
-                searchButton.disabled = false;
-                stopButton.disabled = true;
-                searchProcess = null;
+                finalizeUI(searchStatus);
             }
         });
 
-        // Add stop button click handler:
-        stopButton.addEventListener('click', () => {
+        stopButton.addEventListener('click', async () => {
             if (searchProcess) {
-                const elapsed = ((performance.now() - searchStartTime) / 1000).toFixed(2);
-                searchTimeSpan.textContent = `(Cancelled after ${elapsed}s)`;
-                ipcRenderer.invoke('stop-search');
                 stopButton.disabled = true;
+
+                const stopped = await ipcRenderer.invoke('stop-search');
+                if (!stopped) {
+                    stopButton.disabled = false;
+                    await showAlert('Unable to stop the current search');
+                }
             }
         });
 
@@ -801,13 +815,16 @@
             }
         });
 
-        // 2) Finalize the UI to indicate search done
-        function finalizeUI() {
+        function finalizeUI(status = 'completed') {
             stopBatchUpdates();
-            progressDiv.classList.remove('active');
-            searchButton.disabled = false;
-            stopButton.disabled = true;
-            // Additional UI updates if needed
+            setSearchUiState(false);
+            searchProcess = null;
+
+            if (status === 'completed') {
+                searchTimeSpan.textContent = `(Search took ${getElapsedSeconds()}s)`;
+            } else if (status === 'failed' && !searchTimeSpan.textContent) {
+                searchTimeSpan.textContent = `(Stopped after ${getElapsedSeconds()}s)`;
+            }
         }
     </script>
 </body>

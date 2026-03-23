@@ -10,6 +10,7 @@ const REPO_NAME = 'recursive-file-content-searcher';
 
 let mainWindow;
 let currentSearchProcess = null;
+let currentSearchStopRequested = false;
 
 // Add this function for version checking
 async function checkForUpdates() {
@@ -105,6 +106,38 @@ function getBinaryPath() {
     return path.join(process.resourcesPath, 'bin/filesystem-searcher.exe');
 }
 
+function terminateSearchProcess(searchProcess) {
+    if (!searchProcess || searchProcess.exitCode !== null) {
+        return Promise.resolve(true);
+    }
+
+    if (process.platform === 'win32') {
+        return new Promise((resolve) => {
+            const killer = spawn('taskkill', ['/pid', String(searchProcess.pid), '/t', '/f'], {
+                windowsHide: true
+            });
+
+            killer.once('close', (code) => {
+                resolve(code === 0);
+            });
+
+            killer.once('error', () => {
+                try {
+                    resolve(searchProcess.kill('SIGTERM'));
+                } catch (_error) {
+                    resolve(false);
+                }
+            });
+        });
+    }
+
+    try {
+        return Promise.resolve(searchProcess.kill('SIGTERM'));
+    } catch (_error) {
+        return Promise.resolve(false);
+    }
+}
+
 ipcMain.handle('search-files', async (event, { pattern, directory, sizeLimit, filePattern }) => {
     return new Promise((resolve, reject) => {
         const args = [pattern, directory, sizeLimit.toString()];
@@ -112,16 +145,34 @@ ipcMain.handle('search-files', async (event, { pattern, directory, sizeLimit, fi
             args.push(filePattern);
         }
         
-        const searcher = spawn(getBinaryPath(), args);
+        const searcher = spawn(getBinaryPath(), args, { windowsHide: true });
         currentSearchProcess = searcher;
+        currentSearchStopRequested = false;
 
-        // Remove output accumulation
-        // let output = ''; // Removed
         let error = '';
+        let settled = false;
+
+        const finishSearch = (result) => {
+            if (settled) {
+                return;
+            }
+
+            settled = true;
+            if (currentSearchProcess === searcher) {
+                currentSearchProcess = null;
+                currentSearchStopRequested = false;
+            }
+
+            if (result.status === 'failed') {
+                reject(result.error);
+                return;
+            }
+
+            resolve(result);
+        };
 
         searcher.stdout.on('data', (data) => {
             const text = data.toString();
-            // output += text; // Removed
             mainWindow.webContents.send('search-progress', text);
         });
 
@@ -129,18 +180,25 @@ ipcMain.handle('search-files', async (event, { pattern, directory, sizeLimit, fi
             error += data.toString();
         });
 
-        searcher.on('close', (code) => {
-            currentSearchProcess = null;
+        searcher.once('exit', (code, signal) => {
+            if (currentSearchStopRequested) {
+                finishSearch({ status: 'cancelled' });
+                return;
+            }
+
             if (code === 0) {
-                resolve(); // Resolve without output
+                finishSearch({ status: 'completed' });
             } else {
-                reject(error || 'Search process failed');
+                const failureReason = error.trim() || `Search process failed (code: ${code ?? 'unknown'}${signal ? `, signal: ${signal}` : ''})`;
+                finishSearch({ status: 'failed', error: failureReason });
             }
         });
 
-        searcher.on('error', (err) => {
-            currentSearchProcess = null;
-            reject(`Failed to start search process: ${err.message}`);
+        searcher.once('error', (err) => {
+            finishSearch({
+                status: 'failed',
+                error: `Failed to start search process: ${err.message}`
+            });
         });
     });
 });
@@ -148,10 +206,14 @@ ipcMain.handle('search-files', async (event, { pattern, directory, sizeLimit, fi
 ipcMain.handle('stop-search', async () => {
     if (currentSearchProcess) {
         try {
-            currentSearchProcess.kill();
-            currentSearchProcess = null;
-            return true;
+            currentSearchStopRequested = true;
+            const stopped = await terminateSearchProcess(currentSearchProcess);
+            if (!stopped) {
+                currentSearchStopRequested = false;
+            }
+            return stopped;
         } catch (error) {
+            currentSearchStopRequested = false;
             console.error('Error stopping search:', error);
             return false;
         }
